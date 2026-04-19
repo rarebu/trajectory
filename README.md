@@ -51,6 +51,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, failure modes, and 
 | Active tables in production | `flights`, `ships` (the 253 M + 726 M figures). `vehicle_positions`, `satellites`, `db_departures` are wired but deployment-dormant. |
 | p99 ingest latency | instrumented via per-row `ingested_at` column; query in [`sql/queries/latency.sql`](sql/queries/latency.sql) |
 
+![trajectory dashboard](docs/grafana.png)
+
 ## Quickstart
 
 Requires Rust 1.88+, Docker (for the database), and `protoc` for the GTFS-RT build step (`sudo apt install protobuf-compiler` on Debian/Ubuntu).
@@ -187,10 +189,6 @@ Verify the sandbox:
 ```bash
 systemd-analyze security trajectory.service
 ```
-
-### Grafana
-
-![trajectory dashboard](docs/grafana.png)
 
 ## Development
 
