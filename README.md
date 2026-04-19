@@ -190,9 +190,7 @@ systemd-analyze security trajectory.service
 
 ### Grafana
 
-![grafana dashboard](docs/grafana.png)
-
-*(Screenshot pending — dashboard lives at `grafana/trajectory.json`.)*
+![trajectory dashboard](docs/grafana.png)
 
 ## Development
 
