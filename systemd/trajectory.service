@@ -1,6 +1,6 @@
 [Unit]
 Description=trajectory ingest daemon
-Documentation=https://github.com/USER/trajectory
+Documentation=https://github.com/rarebu/trajectory
 After=network-online.target postgresql.service
 Wants=network-online.target
 

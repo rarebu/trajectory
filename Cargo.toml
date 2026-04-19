@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.88"
 description = "Real-time ingestion daemon for aircraft, ship, train, and satellite trajectories"
 license = "MIT"
-repository = "https://github.com/TODO/trajectory"
+repository = "https://github.com/rarebu/trajectory"
 readme = "README.md"
 
 [[bin]]

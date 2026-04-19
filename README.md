@@ -2,7 +2,7 @@
 
 A Rust daemon that ingests real-time trajectories — aircraft, ships, trains, and satellites — into PostgreSQL/TimescaleDB.
 
-[![build](https://github.com/USER/trajectory/actions/workflows/ci.yml/badge.svg)](https://github.com/USER/trajectory/actions/workflows/ci.yml)
+[![build](https://github.com/rarebu/trajectory/actions/workflows/ci.yml/badge.svg)](https://github.com/rarebu/trajectory/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](Cargo.toml)
 
