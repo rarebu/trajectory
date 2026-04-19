@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgis/postgis:15-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: trajectory
+      POSTGRES_USER: trajectory
+      POSTGRES_PASSWORD: trajectory
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - trajectory-db:/var/lib/postgresql/data
+      # Only schema.sql auto-runs on first boot; schema_timescaledb.sql is
+      # opt-in (requires the TimescaleDB extension; run it manually).
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trajectory -d trajectory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  trajectory-db:
