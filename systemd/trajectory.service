@@ -1,0 +1,84 @@
+[Unit]
+Description=trajectory ingest daemon
+Documentation=https://github.com/USER/trajectory
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=trajectory
+Group=trajectory
+WorkingDirectory=/var/lib/trajectory
+
+# Credentials live outside the sandbox (mode 0640, root:trajectory) so the
+# daemon can read them but the service user cannot rewrite them.
+EnvironmentFile=/etc/trajectory/trajectory.env
+ExecStart=/usr/local/bin/trajectory daemon
+
+Restart=always
+RestartSec=10s
+TimeoutStopSec=30s
+KillMode=mixed
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trajectory
+
+# Resource caps. Peak RSS is ~1 GB during GTFS-RT decode; MemoryMax gives a
+# little headroom, MemoryHigh applies soft pressure before OOM-kill.
+MemoryMax=1500M
+MemoryHigh=1G
+TasksMax=256
+LimitNOFILE=4096
+LimitNPROC=128
+
+# ------------------------------------------------------------------------
+# Hardening.  systemd-analyze security trajectory.service should report
+# an exposure level of OK (ideally < 2.0).
+# ------------------------------------------------------------------------
+
+# Filesystem: everything read-only except the single data directory.
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/trajectory
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+
+# Process / privilege: drop everything the daemon does not need.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+UMask=0077
+
+# Syscalls: allow a typical service profile, nothing else. @system-service
+# already excludes @mount, @reboot, @swap, @module, @raw-io, @debug, etc.
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Network: only the three address families we actually use. IPAddressAllow/
+# Deny are left at their defaults because upstream feeds sit behind CDNs
+# with churning IPs; allow-listing them is not meaningful. Egress policy is
+# enforced upstream (firewall/DNS) if the operator wants it.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Hardware: no device access needed.
+DeviceAllow=
+
+[Install]
+WantedBy=multi-user.target
