@@ -26,6 +26,8 @@ const BATCH_SIZE: usize = 500;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(3);
 const SESSION_MAX: Duration = Duration::from_secs(600);
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
+const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
+const INSERT_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Serialize)]
 struct AisSubscribe {
@@ -88,14 +90,37 @@ async fn run_session(pool: &PgPool, api_key: &str, dedup_enabled: bool) -> Resul
     let mut batch: Vec<Ship> = Vec::with_capacity(BATCH_SIZE);
     let mut last_flush = Instant::now();
     let session_start = Instant::now();
+    let mut last_insert_at = Instant::now();
     let mut msg_count: u64 = 0;
     let mut inserted_total: u64 = 0;
 
-    while let Some(frame) = ws.next().await {
+    loop {
         if session_start.elapsed() > SESSION_MAX {
             info!("ais session limit reached, recycling");
             break;
         }
+        // aisstream has gone silent on us without closing the socket; break so
+        // run_continuous reconnects. 60s grace lets a fresh session warm up.
+        if session_start.elapsed() > Duration::from_secs(60)
+            && last_insert_at.elapsed() > INSERT_STALL_TIMEOUT
+        {
+            warn!(
+                messages = msg_count,
+                inserted = inserted_total,
+                stall_secs = last_insert_at.elapsed().as_secs(),
+                "ais stream stalled, reconnecting"
+            );
+            break;
+        }
+
+        let frame = match tokio::time::timeout(FRAME_TIMEOUT, ws.next()).await {
+            Ok(Some(f)) => f,
+            Ok(None) => {
+                info!("ais stream closed by peer");
+                break;
+            }
+            Err(_) => continue,
+        };
 
         match frame.opcode {
             OpCode::Text | OpCode::Binary => {
@@ -120,7 +145,12 @@ async fn run_session(pool: &PgPool, api_key: &str, dedup_enabled: bool) -> Resul
                             dedup_ships(&mut batch);
                         }
                         match insert_ships(pool, &batch).await {
-                            Ok(n) => inserted_total += n,
+                            Ok(n) => {
+                                inserted_total += n;
+                                if n > 0 {
+                                    last_insert_at = Instant::now();
+                                }
+                            }
                             Err(e) => warn!(error = %e, "ais insert failed"),
                         }
                         batch.clear();
