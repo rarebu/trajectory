@@ -21,14 +21,19 @@ TimeoutStopSec=30s
 KillMode=mixed
 KillSignal=SIGTERM
 
+# Recycle once a day to evict slow heap growth observed in production
+# (RSS climbed to MemoryHigh after ~8 days, throttling DB pool acquisition).
+RuntimeMaxSec=86400
+
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=trajectory
 
-# Resource caps. Peak RSS is ~1 GB during GTFS-RT decode; MemoryMax gives a
-# little headroom, MemoryHigh applies soft pressure before OOM-kill.
-MemoryMax=1500M
-MemoryHigh=1G
+# Resource caps. Peak RSS in steady state is ~1 GB during GTFS-RT decode,
+# but heap creeps over days; doubled limits give breathing room until next
+# RuntimeMaxSec recycle.
+MemoryMax=2500M
+MemoryHigh=2G
 TasksMax=256
 LimitNOFILE=4096
 LimitNPROC=128

@@ -10,7 +10,7 @@ use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
@@ -28,6 +28,10 @@ const SESSION_MAX: Duration = Duration::from_secs(600);
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 const INSERT_STALL_TIMEOUT: Duration = Duration::from_secs(120);
+const RATE_WINDOW: Duration = Duration::from_secs(300);
+// Healthy throughput is ~75k inserts / 5min; 1k catches the slow-trickle
+// degradation we hit in production when DB pool was starved.
+const RATE_MIN_INSERTS: u64 = 1000;
 
 #[derive(Debug, Serialize)]
 struct AisSubscribe {
@@ -91,6 +95,7 @@ async fn run_session(pool: &PgPool, api_key: &str, dedup_enabled: bool) -> Resul
     let mut last_flush = Instant::now();
     let session_start = Instant::now();
     let mut last_insert_at = Instant::now();
+    let mut insert_history: VecDeque<(Instant, u64)> = VecDeque::new();
     let mut msg_count: u64 = 0;
     let mut inserted_total: u64 = 0;
 
@@ -111,6 +116,28 @@ async fn run_session(pool: &PgPool, api_key: &str, dedup_enabled: bool) -> Resul
                 "ais stream stalled, reconnecting"
             );
             break;
+        }
+        // Catches the slow-trickle case where individual inserts keep landing
+        // (so last_insert_at stays fresh) but throughput collapses to a
+        // fraction of normal — observed at ~15 inserts/min vs. ~250 inserts/sec
+        // when the DB pool was starved by memory pressure.
+        while let Some(&(t, _)) = insert_history.front() {
+            if t.elapsed() > RATE_WINDOW {
+                insert_history.pop_front();
+            } else {
+                break;
+            }
+        }
+        if session_start.elapsed() > RATE_WINDOW {
+            let recent: u64 = insert_history.iter().map(|(_, n)| n).sum();
+            if recent < RATE_MIN_INSERTS {
+                warn!(
+                    inserted_in_window = recent,
+                    window_secs = RATE_WINDOW.as_secs(),
+                    "ais throughput collapsed, reconnecting"
+                );
+                break;
+            }
         }
 
         let frame = match tokio::time::timeout(FRAME_TIMEOUT, ws.next()).await {
@@ -149,6 +176,7 @@ async fn run_session(pool: &PgPool, api_key: &str, dedup_enabled: bool) -> Resul
                                 inserted_total += n;
                                 if n > 0 {
                                     last_insert_at = Instant::now();
+                                    insert_history.push_back((Instant::now(), n));
                                 }
                             }
                             Err(e) => warn!(error = %e, "ais insert failed"),
