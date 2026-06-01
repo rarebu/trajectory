@@ -61,7 +61,7 @@ sequenceDiagram
     Note over S: on Err → warn!, continue<br/>on Ok → next tick
 ```
 
-The scheduler ([`src/scheduler/simple.rs`](src/scheduler/simple.rs))
+The scheduler ([`src/scheduler.rs`](src/scheduler.rs))
 owns one `tokio::spawn` per source group; within a group, ingestors run
 sequentially. The AIS ingestor is the exception: it owns a persistent
 WebSocket that runs its own loop ([`src/ingestors/ais.rs`](src/ingestors/ais.rs),
@@ -124,7 +124,7 @@ roughly 10-30 MB/day, eventually triggering systemd's `MemoryHigh`
 pressure and a restart.
 
 The current design
-([`src/scheduler/simple.rs`](src/scheduler/simple.rs)) is a plain
+([`src/scheduler.rs`](src/scheduler.rs)) is a plain
 `tokio::interval` per source group with
 `MissedTickBehavior::Skip`. This is ~40 lines of code, zero external
 state, and has been stable for weeks at constant RSS.
@@ -137,7 +137,7 @@ state, and has been stable for weeks at constant RSS.
 
 `run_flights_loop` invokes OpenSky → adsb.lol → airplanes.live →
 ADSB One → adsb.fi one after another
-([`src/scheduler/simple.rs`](src/scheduler/simple.rs)).
+([`src/scheduler.rs`](src/scheduler.rs)).
 
 - **Alternative considered:** `FuturesUnordered` with a bounded
   concurrency limit.
@@ -232,22 +232,22 @@ SELECT ... FROM UNNEST($1::timestamptz[], $2::text[], ...) AS t(...)
   applies only to this pool. A co-tenant application on the same
   cluster is unaffected.
 
-### 4.8 Error handling: `anyhow` throughout, typed errors in `src/error.rs`
+### 4.8 Error handling: `anyhow` throughout
 
-- Every ingestor returns `anyhow::Result<()>`.
-- The library surface
-  ([`src/error.rs`](src/error.rs)) defines `ConfigError` and
-  `IngestError` with `thiserror` for use by downstream consumers of
-  the crate. The binary itself opts for `anyhow` because the errors
-  it encounters are already rich enough via `#[from]` conversions and
-  are never programmatically matched.
+- Every ingestor returns `anyhow::Result<()>`. Errors are logged with
+  context and never programmatically matched, so one `anyhow` error
+  type across the whole binary is the honest fit: the `#[from]`
+  conversions on the underlying `reqwest`/`sqlx`/`serde_json` errors
+  already carry enough detail (HTTP status, SQL state, decode message)
+  for the log line. A parallel hierarchy of `thiserror` enums that
+  nothing ever matched on would have been dead surface area.
 - **Transient errors** (HTTP 5xx, network timeout, DB connection
   drop): `warn!(error = %e, …)` and continue. The next tick retries.
   No explicit backoff — the tick interval is the backoff.
 - **Upstream non-success** (HTTP 4xx): `warn!` and skip that source
   for this tick. The private feeder has a special 5-minute backoff on
   `"Login failed"` substrings
-  ([`src/scheduler/simple.rs`](src/scheduler/simple.rs),
+  ([`src/scheduler.rs`](src/scheduler.rs),
   `run_bratwurst_loop`) because cookie-session auth fails often and
   hammering the login endpoint invites a ban.
 - **Panic** in a spawned task: `JoinHandle::await` surfaces it,
@@ -450,10 +450,6 @@ that runs against this as its spec.
 
 ### 7.4 Code
 
-- **Wire `IngestError` through the ingestors.** Today it exists in
-  `src/error.rs` but is not used. The binary is `anyhow` top to
-  bottom; narrow typed errors at the library boundary would be more
-  honest.
 - **Replace ad-hoc `sleep(500ms)`** between sequential HTTP calls
   with an explicit rate-limiter.
 - **AIS reconnect trigger.** The current "reconnect every 10 min"
@@ -491,9 +487,9 @@ Files referenced in this document:
 
 - [`Cargo.toml`](Cargo.toml), [`build.rs`](build.rs)
 - [`src/main.rs`](src/main.rs), [`src/lib.rs`](src/lib.rs)
-- [`src/config.rs`](src/config.rs), [`src/error.rs`](src/error.rs), [`src/telemetry.rs`](src/telemetry.rs)
-- [`src/ingestors/`](src/ingestors/) — all source-specific modules
+- [`src/config.rs`](src/config.rs), [`src/http.rs`](src/http.rs), [`src/telemetry.rs`](src/telemetry.rs)
+- [`src/ingestors/`](src/ingestors/) — per-source modules plus [`adsb.rs`](src/ingestors/adsb.rs) (shared readsb/ADS-B schema + `Flight` mapping)
 - [`src/storage/pool.rs`](src/storage/pool.rs), [`src/storage/queries.rs`](src/storage/queries.rs), [`src/storage/retention.rs`](src/storage/retention.rs)
-- [`src/scheduler/simple.rs`](src/scheduler/simple.rs)
+- [`src/scheduler.rs`](src/scheduler.rs)
 - [`sql/schema.sql`](sql/schema.sql), [`docker-compose.yml`](docker-compose.yml)
 - [`systemd/trajectory.service`](systemd/trajectory.service) (created in step 8)

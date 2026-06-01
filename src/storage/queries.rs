@@ -8,17 +8,39 @@ use std::time::Instant;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::postgres::PgArguments;
+use sqlx::query::Query;
+use sqlx::{PgPool, Postgres};
 use tracing::debug;
 
 use super::models::{Departure, Flight, Satellite, Ship, VehiclePositionRecord};
+
+/// Shared tail for every bulk insert: run the prepared query and emit the
+/// timing / row-count debug line, so each `insert_*` only has to assemble its
+/// per-column arrays.
+async fn execute_bulk(
+    pool: &PgPool,
+    table: &'static str,
+    batch_len: usize,
+    query: Query<'_, Postgres, PgArguments>,
+) -> Result<u64> {
+    let start = Instant::now();
+    let count = query.execute(pool).await?.rows_affected();
+    debug!(
+        table,
+        count,
+        batch = batch_len,
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "bulk insert"
+    );
+    Ok(count)
+}
 
 pub async fn insert_flights(pool: &PgPool, flights: &[Flight]) -> Result<u64> {
     if flights.is_empty() {
         return Ok(0);
     }
 
-    let start = Instant::now();
     let batch_len = flights.len();
 
     let timestamps: Vec<DateTime<Utc>> = flights.iter().map(|f| f.timestamp).collect();
@@ -37,7 +59,7 @@ pub async fn insert_flights(pool: &PgPool, flights: &[Flight]) -> Result<u64> {
     let vert_rates: Vec<Option<f64>> = flights.iter().map(|f| f.vertical_rate).collect();
     let sources: Vec<&str> = flights.iter().map(|f| f.source.as_str()).collect();
 
-    let result = sqlx::query(
+    let query = sqlx::query(
         r#"
         INSERT INTO flights (timestamp, icao24, callsign, origin_country, longitude, latitude,
                             baro_altitude, on_ground, velocity, true_track, vertical_rate,
@@ -68,19 +90,9 @@ pub async fn insert_flights(pool: &PgPool, flights: &[Flight]) -> Result<u64> {
     .bind(&velocities)
     .bind(&tracks)
     .bind(&vert_rates)
-    .bind(&sources)
-    .execute(pool)
-    .await?;
+    .bind(&sources);
 
-    let count = result.rows_affected();
-    debug!(
-        table = "flights",
-        count,
-        batch = batch_len,
-        elapsed_ms = start.elapsed().as_millis() as u64,
-        "bulk insert"
-    );
-    Ok(count)
+    execute_bulk(pool, "flights", batch_len, query).await
 }
 
 pub async fn insert_ships(pool: &PgPool, ships: &[Ship]) -> Result<u64> {
@@ -88,7 +100,6 @@ pub async fn insert_ships(pool: &PgPool, ships: &[Ship]) -> Result<u64> {
         return Ok(0);
     }
 
-    let start = Instant::now();
     let batch_len = ships.len();
 
     let timestamps: Vec<DateTime<Utc>> = ships.iter().map(|s| s.timestamp).collect();
@@ -98,7 +109,7 @@ pub async fn insert_ships(pool: &PgPool, ships: &[Ship]) -> Result<u64> {
     let longitudes: Vec<Option<f64>> = ships.iter().map(|s| s.longitude).collect();
     let msg_types: Vec<Option<&str>> = ships.iter().map(|s| s.message_type.as_deref()).collect();
 
-    let result = sqlx::query(
+    let query = sqlx::query(
         r#"
         INSERT INTO ships (timestamp, mmsi, ship_name, latitude, longitude, message_type, geom)
         SELECT
@@ -117,19 +128,9 @@ pub async fn insert_ships(pool: &PgPool, ships: &[Ship]) -> Result<u64> {
     .bind(&names)
     .bind(&latitudes)
     .bind(&longitudes)
-    .bind(&msg_types)
-    .execute(pool)
-    .await?;
+    .bind(&msg_types);
 
-    let count = result.rows_affected();
-    debug!(
-        table = "ships",
-        count,
-        batch = batch_len,
-        elapsed_ms = start.elapsed().as_millis() as u64,
-        "bulk insert"
-    );
-    Ok(count)
+    execute_bulk(pool, "ships", batch_len, query).await
 }
 
 pub async fn insert_departures(pool: &PgPool, departures: &[Departure]) -> Result<u64> {
@@ -137,7 +138,6 @@ pub async fn insert_departures(pool: &PgPool, departures: &[Departure]) -> Resul
         return Ok(0);
     }
 
-    let start = Instant::now();
     let batch_len = departures.len();
 
     let timestamps: Vec<DateTime<Utc>> = departures.iter().map(|d| d.timestamp).collect();
@@ -162,7 +162,7 @@ pub async fn insert_departures(pool: &PgPool, departures: &[Departure]) -> Resul
         .collect();
     let platform_changeds: Vec<bool> = departures.iter().map(|d| d.platform_changed).collect();
 
-    let result = sqlx::query(
+    let query = sqlx::query(
         r#"
         INSERT INTO db_departures (timestamp, station_id, station_name, trip_id, line_name,
                                    direction, planned_time, actual_time, delay_seconds,
@@ -192,19 +192,9 @@ pub async fn insert_departures(pool: &PgPool, departures: &[Departure]) -> Resul
     .bind(&cancelleds)
     .bind(&platforms_planned)
     .bind(&platforms_actual)
-    .bind(&platform_changeds)
-    .execute(pool)
-    .await?;
+    .bind(&platform_changeds);
 
-    let count = result.rows_affected();
-    debug!(
-        table = "db_departures",
-        count,
-        batch = batch_len,
-        elapsed_ms = start.elapsed().as_millis() as u64,
-        "bulk insert"
-    );
-    Ok(count)
+    execute_bulk(pool, "db_departures", batch_len, query).await
 }
 
 pub async fn insert_satellites(pool: &PgPool, satellites: &[Satellite]) -> Result<u64> {
@@ -212,7 +202,6 @@ pub async fn insert_satellites(pool: &PgPool, satellites: &[Satellite]) -> Resul
         return Ok(0);
     }
 
-    let start = Instant::now();
     let batch_len = satellites.len();
 
     let timestamps: Vec<DateTime<Utc>> = satellites.iter().map(|s| s.timestamp).collect();
@@ -225,7 +214,7 @@ pub async fn insert_satellites(pool: &PgPool, satellites: &[Satellite]) -> Resul
     let tle1s: Vec<Option<&str>> = satellites.iter().map(|s| s.tle_line1.as_deref()).collect();
     let tle2s: Vec<Option<&str>> = satellites.iter().map(|s| s.tle_line2.as_deref()).collect();
 
-    let result = sqlx::query(
+    let query = sqlx::query(
         r#"
         INSERT INTO satellites (timestamp, norad_id, name, epoch, mean_motion,
                                inclination, eccentricity, tle_line1, tle_line2)
@@ -247,19 +236,9 @@ pub async fn insert_satellites(pool: &PgPool, satellites: &[Satellite]) -> Resul
     .bind(&inclinations)
     .bind(&eccentricities)
     .bind(&tle1s)
-    .bind(&tle2s)
-    .execute(pool)
-    .await?;
+    .bind(&tle2s);
 
-    let count = result.rows_affected();
-    debug!(
-        table = "satellites",
-        count,
-        batch = batch_len,
-        elapsed_ms = start.elapsed().as_millis() as u64,
-        "bulk insert"
-    );
-    Ok(count)
+    execute_bulk(pool, "satellites", batch_len, query).await
 }
 
 pub async fn insert_vehicle_positions(
@@ -270,7 +249,6 @@ pub async fn insert_vehicle_positions(
         return Ok(0);
     }
 
-    let start = Instant::now();
     let batch_len = records.len();
 
     let timestamps: Vec<DateTime<Utc>> = records.iter().map(|r| r.timestamp).collect();
@@ -283,7 +261,7 @@ pub async fn insert_vehicle_positions(
     let bearings: Vec<Option<f32>> = records.iter().map(|r| r.bearing).collect();
     let speeds: Vec<Option<f32>> = records.iter().map(|r| r.speed).collect();
 
-    let result = sqlx::query(
+    let query = sqlx::query(
         r#"
         INSERT INTO vehicle_positions (timestamp, feed_timestamp, vehicle_id, trip_id, route_id,
                                        latitude, longitude, bearing, speed, geom)
@@ -306,17 +284,7 @@ pub async fn insert_vehicle_positions(
     .bind(&latitudes)
     .bind(&longitudes)
     .bind(&bearings)
-    .bind(&speeds)
-    .execute(pool)
-    .await?;
+    .bind(&speeds);
 
-    let count = result.rows_affected();
-    debug!(
-        table = "vehicle_positions",
-        count,
-        batch = batch_len,
-        elapsed_ms = start.elapsed().as_millis() as u64,
-        "bulk insert"
-    );
-    Ok(count)
+    execute_bulk(pool, "vehicle_positions", batch_len, query).await
 }

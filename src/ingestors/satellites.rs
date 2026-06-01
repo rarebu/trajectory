@@ -7,9 +7,9 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tracing::{info, warn};
 
+use crate::http::create_client_with_timeout;
 use crate::storage::models::Satellite;
 use crate::storage::queries::insert_satellites;
-use crate::utils::http::create_client_with_timeout;
 
 const CELESTRAK_BASE: &str = "https://celestrak.org/NORAD/elements/gp.php";
 

@@ -6,7 +6,7 @@ use anyhow::Result;
 use chrono::Utc;
 use tracing::{error, info, warn};
 
-use crate::utils::http::create_client_with_timeout;
+use crate::http::create_client_with_timeout;
 
 const GTFS_DOWNLOAD_TIMEOUT_SECS: u64 = 600;
 

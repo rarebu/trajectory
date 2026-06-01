@@ -3,15 +3,14 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use serde::Deserialize;
 use sqlx::PgPool;
 use std::collections::HashSet;
 use std::time::Duration;
 use tracing::{info, warn};
 
-use crate::storage::models::Flight;
+use crate::http::create_client;
+use crate::ingestors::adsb::AdsbResponse;
 use crate::storage::queries::insert_flights;
-use crate::utils::http::create_client;
 
 const TYPE_ENDPOINTS: &[&str] = &[
     "https://api.adsb.one/v2/type/A319",
@@ -51,24 +50,6 @@ const TYPE_ENDPOINTS: &[&str] = &[
     "https://api.adsb.one/v2/type/A400",
 ];
 
-#[derive(Debug, Deserialize)]
-struct AdsbOneResponse {
-    ac: Option<Vec<AdsbOneAircraft>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AdsbOneAircraft {
-    hex: Option<String>,
-    flight: Option<String>,
-    lat: Option<f64>,
-    lon: Option<f64>,
-    alt_baro: Option<serde_json::Value>,
-    alt_geom: Option<i64>,
-    gs: Option<f64>,
-    track: Option<f64>,
-    baro_rate: Option<f64>,
-}
-
 pub async fn fetch(pool: &PgPool, delay_ms: u64) -> Result<()> {
     let client = create_client()?;
     let timestamp = Utc::now();
@@ -79,12 +60,12 @@ pub async fn fetch(pool: &PgPool, delay_ms: u64) -> Result<()> {
     for url in TYPE_ENDPOINTS {
         match client.get(*url).send().await {
             Ok(response) if response.status().is_success() => {
-                if let Ok(data) = response.json::<AdsbOneResponse>().await {
-                    if let Some(aircraft) = data.ac {
+                if let Ok(data) = response.json::<AdsbResponse>().await {
+                    if let Some(aircraft) = data.aircraft {
                         for ac in &aircraft {
                             let Some(hex) = &ac.hex else { continue };
-                            if ac.lat.is_some() && ac.lon.is_some() && seen.insert(hex.clone()) {
-                                all_flights.push(parse(ac, timestamp));
+                            if ac.has_position() && seen.insert(hex.clone()) {
+                                all_flights.push(ac.to_flight("adsbone", timestamp));
                             }
                         }
                     }
@@ -105,32 +86,4 @@ pub async fn fetch(pool: &PgPool, delay_ms: u64) -> Result<()> {
     insert_flights(pool, &all_flights).await?;
     info!(count = all_flights.len(), "adsb.one ingested");
     Ok(())
-}
-
-fn parse(ac: &AdsbOneAircraft, timestamp: chrono::DateTime<Utc>) -> Flight {
-    let altitude = ac
-        .alt_baro
-        .as_ref()
-        .and_then(|v| v.as_f64())
-        .or_else(|| ac.alt_geom.map(|x| x as f64));
-    let on_ground = ac
-        .alt_baro
-        .as_ref()
-        .and_then(|v| v.as_str())
-        .map(|s| s == "ground");
-
-    Flight {
-        timestamp,
-        icao24: ac.hex.clone(),
-        callsign: ac.flight.as_deref().map(|s| s.trim().to_string()),
-        origin_country: None,
-        longitude: ac.lon,
-        latitude: ac.lat,
-        baro_altitude: altitude,
-        on_ground,
-        velocity: ac.gs,
-        true_track: ac.track,
-        vertical_rate: ac.baro_rate,
-        source: "adsbone".to_string(),
-    }
 }

@@ -3,14 +3,14 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use serde::Deserialize;
 use sqlx::PgPool;
 use std::collections::HashSet;
 use tracing::{info, warn};
 
+use crate::http::create_client;
+use crate::ingestors::adsb::AdsbResponse;
 use crate::storage::models::Flight;
 use crate::storage::queries::insert_flights;
-use crate::utils::http::create_client;
 
 const REGIONS: &[(&str, &str)] = &[
     (
@@ -168,23 +168,6 @@ const REGIONS: &[(&str, &str)] = &[
     ("ethiopia", "https://api.airplanes.live/v2/point/9/39/250"),
 ];
 
-#[derive(Debug, Deserialize)]
-struct AirplanesLiveResponse {
-    ac: Option<Vec<AirplanesLiveAircraft>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AirplanesLiveAircraft {
-    hex: Option<String>,
-    flight: Option<String>,
-    lat: Option<f64>,
-    lon: Option<f64>,
-    alt_baro: Option<serde_json::Value>,
-    gs: Option<f64>,
-    track: Option<f64>,
-    baro_rate: Option<f64>,
-}
-
 pub async fn fetch(pool: &PgPool) -> Result<()> {
     let client = create_client()?;
     let timestamp = Utc::now();
@@ -222,41 +205,14 @@ async fn fetch_region(
         anyhow::bail!("airplanes.live returned status {}", response.status());
     }
 
-    let data: AirplanesLiveResponse = response.json().await?;
-    let Some(aircraft) = data.ac else {
+    let data: AdsbResponse = response.json().await?;
+    let Some(aircraft) = data.aircraft else {
         return Ok(Vec::new());
     };
 
     Ok(aircraft
         .iter()
-        .filter_map(|ac| parse(ac, timestamp))
+        .filter(|ac| ac.has_position())
+        .map(|ac| ac.to_flight("airplaneslive", timestamp))
         .collect())
-}
-
-fn parse(ac: &AirplanesLiveAircraft, timestamp: chrono::DateTime<Utc>) -> Option<Flight> {
-    if ac.lat.is_none() || ac.lon.is_none() {
-        return None;
-    }
-
-    let altitude = ac.alt_baro.as_ref().and_then(|v| v.as_f64());
-    let on_ground = ac
-        .alt_baro
-        .as_ref()
-        .and_then(|v| v.as_str())
-        .map(|s| s == "ground");
-
-    Some(Flight {
-        timestamp,
-        icao24: ac.hex.clone(),
-        callsign: ac.flight.as_deref().map(|s| s.trim().to_string()),
-        origin_country: None,
-        longitude: ac.lon,
-        latitude: ac.lat,
-        baro_altitude: altitude,
-        on_ground,
-        velocity: ac.gs,
-        true_track: ac.track,
-        vertical_rate: ac.baro_rate,
-        source: "airplaneslive".to_string(),
-    })
 }

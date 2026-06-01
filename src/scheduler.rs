@@ -17,16 +17,6 @@ use tracing::{error, info, warn};
 use crate::config::Config;
 use crate::ingestors;
 
-#[derive(Clone)]
-struct AdsbConfig {
-    opensky: bool,
-    lol: bool,
-    fi: bool,
-    one: bool,
-    airplaneslive: bool,
-    adsb_one_delay_ms: u64,
-}
-
 pub async fn run(pool: PgPool, config: Config) -> Result<()> {
     let flights_interval = Duration::from_secs(config.flights_interval_secs);
     let trains_interval = Duration::from_secs(config.trains_interval_secs);
@@ -34,15 +24,6 @@ pub async fn run(pool: PgPool, config: Config) -> Result<()> {
     let gtfs_static_interval = Duration::from_secs(config.gtfs_static_interval_secs);
     let satellites_interval = Duration::from_secs(config.satellites_interval_secs);
     let bratwurst_interval = Duration::from_secs(config.bratwurst_interval_secs);
-
-    let adsb_config = AdsbConfig {
-        opensky: config.adsb_opensky_enabled,
-        lol: config.adsb_lol_enabled,
-        fi: config.adsb_fi_enabled,
-        one: config.adsb_one_enabled,
-        airplaneslive: config.adsb_airplaneslive_enabled,
-        adsb_one_delay_ms: config.adsb_one_delay_ms,
-    };
 
     let mut handles = Vec::new();
 
@@ -57,7 +38,6 @@ pub async fn run(pool: PgPool, config: Config) -> Result<()> {
         pool.clone(),
         flights_interval,
         config.clone(),
-        adsb_config.clone(),
     )));
 
     if config.trains_enabled {
@@ -124,12 +104,7 @@ async fn run_gtfs_rt_loop(pool: PgPool, interval_duration: Duration) {
     }
 }
 
-async fn run_flights_loop(
-    pool: PgPool,
-    interval_duration: Duration,
-    config: Config,
-    adsb: AdsbConfig,
-) {
+async fn run_flights_loop(pool: PgPool, interval_duration: Duration, config: Config) {
     tokio::time::sleep(Duration::from_secs(60)).await;
 
     let mut tick = interval(interval_duration);
@@ -138,31 +113,31 @@ async fn run_flights_loop(
     loop {
         tick.tick().await;
 
-        if adsb.opensky {
+        if config.adsb_opensky_enabled {
             if let Err(e) = ingestors::opensky::fetch(&pool, &config).await {
                 warn!(source = "opensky", error = %e, "flights fetch failed");
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        if adsb.lol {
+        if config.adsb_lol_enabled {
             if let Err(e) = ingestors::adsblol::fetch(&pool).await {
                 warn!(source = "adsblol", error = %e, "flights fetch failed");
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        if adsb.airplaneslive {
+        if config.adsb_airplaneslive_enabled {
             if let Err(e) = ingestors::airplaneslive::fetch(&pool).await {
                 warn!(source = "airplaneslive", error = %e, "flights fetch failed");
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        if adsb.one {
-            if let Err(e) = ingestors::adsbone::fetch(&pool, adsb.adsb_one_delay_ms).await {
+        if config.adsb_one_enabled {
+            if let Err(e) = ingestors::adsbone::fetch(&pool, config.adsb_one_delay_ms).await {
                 warn!(source = "adsbone", error = %e, "flights fetch failed");
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        if adsb.fi {
+        if config.adsb_fi_enabled {
             if let Err(e) = ingestors::adsbfi::fetch(&pool).await {
                 warn!(source = "adsbfi", error = %e, "flights fetch failed");
             }

@@ -5,16 +5,14 @@ use sqlx::PgPool;
 use tracing::{info, warn};
 
 use crate::config::Config;
+use crate::http::create_client;
 use crate::storage::models::Flight;
 use crate::storage::queries::insert_flights;
-use crate::utils::http::create_client;
 
 const OPENSKY_URL: &str = "https://opensky-network.org/api/states/all";
 
 #[derive(Debug, Deserialize)]
 struct OpenSkyResponse {
-    #[allow(dead_code)]
-    time: i64,
     states: Option<Vec<Vec<serde_json::Value>>>,
 }
 

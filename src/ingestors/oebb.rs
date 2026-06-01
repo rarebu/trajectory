@@ -7,9 +7,9 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tracing::{info, warn};
 
+use crate::http::create_client;
 use crate::storage::models::Departure;
 use crate::storage::queries::insert_departures;
-use crate::utils::http::create_client;
 
 const API_BASE: &str = "https://oebb.macistry.com/api";
 

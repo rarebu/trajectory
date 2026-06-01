@@ -12,9 +12,9 @@ use prost::Message;
 use sqlx::PgPool;
 use tracing::info;
 
+use crate::http::create_client;
 use crate::storage::models::VehiclePositionRecord;
 use crate::storage::queries::insert_vehicle_positions;
-use crate::utils::http::create_client;
 
 pub mod transit_realtime {
     include!(concat!(env!("OUT_DIR"), "/transit_realtime.rs"));
