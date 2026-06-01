@@ -35,20 +35,19 @@ flowchart LR
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, failure modes, and security considerations.
 
-## Metrics (production deployment, 2026-01-12 to 2026-04-19)
+## Metrics (production deployment, 2026-01-12 to 2026-06-01)
 
 | Metric | Value |
 |---|---|
-| Total records | 979 M |
-| &nbsp;&nbsp;&nbsp;&nbsp;Flights | 253 M |
-| &nbsp;&nbsp;&nbsp;&nbsp;Ships (AIS) | 726 M |
-| Average throughput | 117 rec/s |
-| Peak (1 h) | 297 rec/s |
-| Peak (10 min) | 291 rec/s |
+| Total records | 1.70 B |
+| &nbsp;&nbsp;&nbsp;&nbsp;Flights | 356 M |
+| &nbsp;&nbsp;&nbsp;&nbsp;Ships (AIS) | 1.35 B |
+| Average throughput | 141 rec/s |
+| Peak (1 h) | 257 rec/s |
 | Peak (1 min) | 468 rec/s (28 109 inserts) |
-| Deployment window | 97 days continuous |
-| Current release uptime | 3 weeks stable (since 2026-03-29 AIS WebSocket fix) |
-| Active tables in production | `flights`, `ships` (the 253 M + 726 M figures). `vehicle_positions`, `satellites`, `db_departures` are wired but deployment-dormant. |
+| Deployment window | 140 days continuous (≈ 20 weeks) |
+| Resilience | AIS frame-timeout + rate-watchdog (`<1k inserts/5 min` triggers reconnect); systemd `RuntimeMaxSec=86400` recycles the daemon daily |
+| Active tables in production | `flights`, `ships`. `vehicle_positions`, `satellites`, `db_departures` are wired but deployment-dormant. |
 | p99 ingest latency | instrumented via per-row `ingested_at` column; query in [`sql/queries/latency.sql`](sql/queries/latency.sql) |
 
 ![trajectory dashboard](docs/grafana.png)
@@ -164,7 +163,8 @@ A hardened systemd unit lives at [`systemd/trajectory.service`](systemd/trajecto
 | `SystemCallFilter=@system-service` | typical service syscall set; blocks `@mount`/`@reboot`/`@swap`/`@module`/`@raw-io`/`@debug` |
 | `MemoryDenyWriteExecute=yes` | no W^X violations — blocks JIT, but the daemon has no JIT |
 | `LockPersonality`, `RestrictRealtime`, `RestrictSUIDSGID`, `RemoveIPC` | defense-in-depth |
-| `MemoryMax=1500M`, `TasksMax=256` | hard ceiling matching observed peak RSS |
+| `MemoryMax=2500M`, `MemoryHigh=2G`, `TasksMax=256` | hard ceiling well above ~1 GB steady-state RSS |
+| `RuntimeMaxSec=86400` | daily restart to evict slow heap growth observed in long-running production |
 
 ### Install
 
